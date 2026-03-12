@@ -1,0 +1,12 @@
+[build]
+# デフォルトをx86_64のベアメタルに設定（あとで他も追加可能）
+target = "x86_64-unknown-none"
+
+[target.x86_64-unknown-none]
+runner = "C:/users/1510ty/RusticOS/esp/x86_64.bat"
+
+[unstable]
+# no_std環境でcore/allocをビルドするために必要
+build-std = ["core", "compiler_builtins", "alloc"]
+build-std-features = ["compiler-builtins-mem"]
+
