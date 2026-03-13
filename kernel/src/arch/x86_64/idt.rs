@@ -76,7 +76,7 @@ pub fn init(offset: i64) {
         let idtr = Idtr {
             // limit: (core::mem::size_of_val(&IDT) - 1) as u16, // これを以下に変更
             limit: (size_of::<[IdtEntry; 256]>() - 1) as u16,
-            base: to_phys(idt_virt),
+            base: idt_virt,
         };
 
         // 5. CPUにロード
@@ -115,6 +115,7 @@ extern "x86-interrupt" fn page_fault_handler(frame: InterruptStackFrame, error_c
 extern "x86-interrupt" fn timer_handler(_frame: InterruptStackFrame) {
     // 1. カウントアップ
     TICK_COUNT.fetch_add(1, Ordering::Relaxed);
+    //tsc::handle_interrupt();
 
     // 2. EOI (End of Interrupt) を送る
     // これを送らないと、CPUは「まだ前の割り込みが終わってない」と思って

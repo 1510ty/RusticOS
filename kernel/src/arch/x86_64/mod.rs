@@ -4,6 +4,7 @@ use limine::response::ExecutableAddressResponse;
 pub mod gdt;
 pub mod idt;
 pub mod apic;
+pub mod timer;
 
 pub fn init(response: &ExecutableAddressResponse) {
 

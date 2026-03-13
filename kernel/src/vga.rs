@@ -3,12 +3,10 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::ptr::copy_nonoverlapping;
 use spin::mutex::Mutex;
-use crate::{FRAMEBUFFER_BACK, FRAMEBUFFER_REQUEST, NEEDS_FRAME_UPDATE, SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::{height, width, FRAMEBUFFER_BACK, FRAMEBUFFER_REQUEST, NEEDS_FRAME_UPDATE, SCREEN_HEIGHT, SCREEN_WIDTH, VRAM_PTR};
 use crate::drawstr::draw_str;
 
-static mut VRAM_PTR: *mut u32 = core::ptr::null_mut();
-
-pub fn swap_buffers() {
+fn swap_buffers() {
     unsafe {
         if let Some(ref back) = FRAMEBUFFER_BACK {
             // copy_nonoverlapping は Rust版 memcpy
@@ -45,8 +43,8 @@ pub fn init_vga() {
         VRAM_PTR = fb.addr() as *mut u32; // ここで「本物の住所」をメモ！
     }
 
-    let width = fb.width() as usize;
-    let height = fb.height() as usize;
+    unsafe {width = fb.width() as usize;}
+    unsafe {height = fb.height() as usize;}
 
     unsafe {
         SCREEN_WIDTH = width;

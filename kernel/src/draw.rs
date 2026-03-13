@@ -1,5 +1,6 @@
-use crate::vga::{push_command, request_update, DrawCommand};
-use crate::{CURRENT_Y, FRAMEBUFFER_BACK, SCREEN_HEIGHT, SCREEN_WIDTH};
+use core::sync::atomic::Ordering;
+use crate::vga::{push_command, request_update, update_screen, DrawCommand};
+use crate::{CURRENT_Y, FRAMEBUFFER_BACK, INITIALIZED, SCREEN_HEIGHT, SCREEN_WIDTH};
 use limine::memory_map::{Entry, EntryType};
 
 pub fn draw_glyph(x_start: u64, y_start: u64, glyph: &[u32; 24]) {
@@ -63,7 +64,13 @@ pub fn println(s: &str) {
         CURRENT_Y += 24;
 
         // request_update() は「描画が必要だよ」というフラグ立てとして残す
-        request_update();
+        if INITIALIZED.load(Ordering::Relaxed) == false {
+            //起動が完了していない場合
+            update_screen();
+        } else {
+            request_update();
+        }
+
     }
 }
 
