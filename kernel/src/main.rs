@@ -83,8 +83,7 @@ pub extern "C" fn _start() -> ! {
 
     println("Limineから情報を取得しています...");
     //Limineへの実行アドレスのリクエスト
-    let response = EXECUTABLE_ADDRESS_REQUEST.get_response()
-        .expect("Limine request failed");
+    let response = EXECUTABLE_ADDRESS_REQUEST.get_response().unwrap();
 
 
     //メモリマップ取得
@@ -131,21 +130,23 @@ pub extern "C" fn _start() -> ! {
 
     print_usable_memory_stats(mmap);
 
-    for _ in 0..10000 {
-        clear_back_buffer(0xFF0000);
-        clear_back_buffer(0x00FF00);
-        clear_back_buffer(0x0000FF);
-    }
 
-    clear_back_buffer(0xFFFFFF);
 
     loop {
-        // #[cfg(target_arch = "x86_64")]
-        // let t = TICK_COUNT.load(Ordering::Relaxed);
-        // if t % 100 == 0 { // 100回に1回表示
-        //     //print_hex(t);
-        // }
-        // unsafe { asm!("hlt") };
+        #[cfg(target_arch = "x86_64")]
+        let t = TICK_COUNT.load(Ordering::Relaxed);
+        if t % 100 == 0 { // 100回に1回表示
+            print_hex(t);
+        }
+        if t > 1000 { // 10回成功した後に発動...!!
+            unsafe {
+                asm!(
+                "mov rax, 0",
+                "div rax", // 0で割る！
+                );
+            }
+        }
+        unsafe { asm!("hlt") };
 
 
     }
@@ -188,6 +189,7 @@ pub fn print_hex(value: u64) {
         println(s);
     }
 }
+
 
 pub fn println(s: &str) {
     unsafe {

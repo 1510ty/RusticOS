@@ -63,7 +63,6 @@ pub fn init(offset: i64) {
             (virt as i64 + offset) as u64
         };
 
-        // 2. ハンドラを物理アドレスに変換して登録
         IDT[0].set_handler(divide_by_zero_handler as u64);
         IDT[14].set_handler(page_fault_handler as u64);
         IDT[32].set_handler(timer_handler as u64);
@@ -93,6 +92,7 @@ pub fn init(offset: i64) {
 // ※ main.rs の一番上に #![feature(abi_x86_interrupt)] が必要です
 
 extern "x86-interrupt" fn divide_by_zero_handler(frame: InterruptStackFrame) {
+
     println("!!! [EXCEPTION] DIVIDE BY ZERO !!!");
 
     // せっかくなので、どこで死んだか表示してみる

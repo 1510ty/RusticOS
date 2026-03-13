@@ -12,6 +12,7 @@ pub fn init_apic_timer(hhdm_offset: u64) { unsafe {
     // 2. タイマーの設定 (Periodicモード + 割り込み番号32)
     write_reg(0x320, 0x20 | 0x20000);
 
+
     // 3. 初期カウント値を設定してスタート！
-    write_reg(0x380, 0x10000);
+    write_reg(0x380, 0x10000); //10000くらいがちょうどいい
 }}
