@@ -25,11 +25,12 @@ impl GdtEntry {
     }
 }
 
-#[repr(C, packed)]
-pub struct GdtPointer {
-    limit: u16,
-    base: u64,
-}
+//不要?
+// #[repr(C, packed)]
+// pub struct GdtPointer {
+//     limit: u16,
+//     base: u64,
+// }
 
 // 64bitモードで最低限必要なGDT（Null, KernelCode, KernelData）
 #[repr(C, align(16))] // 16バイト境界に強制配置
@@ -96,8 +97,7 @@ pub fn init(offset: i64) {
         let jump_target_virt: u64;
         asm!("lea {}, [rip + 2f]", out(reg) jump_target_virt);
         let jump_target_phys = (jump_target_virt as i64 + offset) as u64;
-
-        let limit = (core::mem::size_of_val(&GDT) - 1) as u16;
+        let limit = (size_of_val(&GDT) - 1) as u16;
 
         // 4. 物理アドレスを CPU に突きつける
         asm!(

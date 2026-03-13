@@ -3,6 +3,7 @@
 #![no_main]
 
 
+extern crate alloc;
 mod font;
 mod drawstr;
 
@@ -12,21 +13,17 @@ mod arch {
     pub mod x86_64;
 }
 
-extern crate alloc;
-
+use crate::arch::x86_64::apic::init_apic_timer;
+use crate::drawstr::draw_str;
 use alloc::vec;
 use alloc::vec::Vec;
-use crate::drawstr::draw_str;
 use core::arch::asm;
 use core::panic::PanicInfo;
 use core::ptr::copy_nonoverlapping;
 use core::sync::atomic::{AtomicU64, Ordering};
-use limine::framebuffer::Framebuffer;
 use limine::memory_map::{Entry, EntryType};
 use limine::request::{ExecutableAddressRequest, FramebufferRequest, HhdmRequest, MemoryMapRequest};
 use linked_list_allocator::LockedHeap;
-use spin::Mutex;
-use crate::arch::x86_64::apic::init_apic_timer;
 
 //Limineからの情報取得
 #[used]
@@ -42,13 +39,14 @@ pub static TICK_COUNT: AtomicU64 = AtomicU64::new(0);
 pub static mut FRAMEBUFFER_BACK: Option<Vec<u32>> = None;
 pub static mut SCREEN_WIDTH: usize = 0;
 pub static mut SCREEN_HEIGHT: usize = 0;
-static mut GLOBAL_BACK_BUFFER: Option<Vec<u32>> = None;
+
+//static mut GLOBAL_BACK_BUFFER: Option<Vec<u32>> = None;
 
 static mut CURRENT_Y: u64 = 0;
 
 pub static mut VRAM_PTR: *mut u32 = core::ptr::null_mut();
 
-static mut NEEDS_FRAME_UPDATE: bool = false;
+//static mut NEEDS_FRAME_UPDATE: bool = false;
 
 #[global_allocator]
 static ALLOCATOR: LockedHeap = LockedHeap::empty();
@@ -107,9 +105,8 @@ pub extern "C" fn _start() -> ! {
 
     println("メモリ確保の初期化が完了しました!");
 
-    unsafe {
-        init_apic_timer(hhdm_offset);
-    }
+    init_apic_timer(hhdm_offset);
+
 
     println("Timer Start!");
 
