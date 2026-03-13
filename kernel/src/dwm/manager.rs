@@ -1,10 +1,8 @@
+use crate::dwm::window::{Window};
 use alloc::vec::Vec;
-use core::slice::Windows;
-use ab_glyph_rasterizer::Rasterizer;
 use spin::mutex::Mutex;
 use spin::once::Once;
-use crate::dwm::window::Window;
-use crate::FONT_DATA;
+use crate::dwm::font::draw_vector_str_generic;
 
 pub static WM: Once<Mutex<WindowManager>> = Once::new();
 
@@ -81,27 +79,38 @@ impl WindowManager {
         // まっさらな状態から描き始めます
         self.screen_buffer.fill(0x404040); // 落ち着いたダークグレー
 
-        // --- STEP 2: 各ウィンドウを順番に描画 ---
-        // インデックスで回すことで、self との借用衝突を回避します
         for i in 0..self.windows.len() {
-            // 描画に必要なパラメータをコピー（借用時間を最小限にする）
-            let (win_x, win_y, win_w, win_h) = {
+            // 描画パラメータと「タイトル」を一旦コピー/取得
+            let (win_x, win_y, win_w, win_h, title) = {
                 let win = &self.windows[i];
-                (win.x, win.y, win.width, win.height)
+                (win.x, win.y, win.width, win.height, win.title.clone())
             };
 
-            // A. Windows 10風タイトルバーの強制描画 (高さ30px)
+            // A. タイトルバーの描画 (30px)
             let bar_h = 30;
             for row in 0..bar_h {
                 for col in 0..win_w {
                     let sx = win_x + col as i32;
                     let sy = (win_y - bar_h as i32) + row as i32;
-
-                    // 右端 30px は「×ボタン」の赤、それ以外は白
                     let color = if col > win_w - 30 { 0xE81123 } else { 0xF3F3F3 };
                     self.set_pixel(sx, sy, color);
                 }
             }
+
+            // ★ ここでタイトル文字を描画！
+            // タイトルバーが白(0xF3F3F3)なので、文字は黒(0x000000)が見やすいです
+            // 座標(x+8, y-22)あたりが、30pxのバーに対してちょうどいい高さになります
+            // draw_vector_str_generic(
+            //     &mut self.screen_buffer,
+            //     self.screen_width,  // ここを screen_width に！
+            //     self.screen_height, // ここを screen_height に！
+            //     cache,
+            //     (win_x + 8) as usize,
+            //     (win_y - 22) as usize,
+            //     &title,
+            //     16.0,
+            //     0x000000
+            // );
 
             // B. ウィンドウ本体（アプリの中身）の描画
             // ここで一旦 buffer への参照を借りる

@@ -2,7 +2,7 @@
 #![no_std]
 #![no_main]
 
-pub static FONT_DATA: &[u8] = include_bytes!("NotoSans-Regular.ttf");
+pub static FONT_DATA: &[u8] = include_bytes!("NotoSansJP-Regular.ttf");
 
 extern crate alloc;
 mod font;
