@@ -1,4 +1,5 @@
-use crate::{draw_glyph, font};
+use crate::draw::draw_glyph;
+use crate::font;
 
 pub fn draw_str(x: u64, y: u64, s: &str, color: u32) {
     let mut current_x = x;

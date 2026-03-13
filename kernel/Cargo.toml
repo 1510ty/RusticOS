@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 limine = "0.5.0"
-spin = { version = "0.10.0", default-features = false, features = ["spin_mutex"] }
 linked_list_allocator = "0.10.5"
 common = { path = "../common" }
 
