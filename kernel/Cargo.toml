@@ -9,6 +9,8 @@ linked_list_allocator = "0.10.5"
 common = { path = "../common" }
 spin = "0.10.0"
 x86_64 = "0.15.4"
+ttf-parser = { version = "0.25.1", default-features = false, features = ["no-std-float"] }
+ab_glyph_rasterizer = { version = "0.1.10", default-features = false, features = ["libm"] }
 
 # [[bin]] セクションに変更します
 [[bin]]

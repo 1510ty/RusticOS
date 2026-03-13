@@ -2,6 +2,8 @@
 #![no_std]
 #![no_main]
 
+pub static FONT_DATA: &[u8] = include_bytes!("NotoSans-Regular.ttf");
+
 extern crate alloc;
 mod font;
 mod drawstr;
@@ -9,6 +11,7 @@ mod vga;
 mod draw;
 mod memory;
 mod dwm;
+
 
 #[cfg(target_arch = "x86_64")]
 mod arch {
@@ -58,8 +61,8 @@ static ALLOCATOR: LockedHeap = LockedHeap::empty();
 
 pub static mut VRAM_PTR: *mut u32 = core::ptr::null_mut();
 
-pub static mut width: usize = 0;
-pub static mut height: usize = 0;
+pub static mut WIDTH: usize = 0;
+pub static mut HEIGHT: usize = 0;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
@@ -145,7 +148,9 @@ pub extern "C" fn _start() -> ! {
 
     println("Starting DWM...");
 
-    unsafe{dwm::main::dwm_main(VRAM_PTR, width, height);}
+    update_screen();
+
+    unsafe{dwm::main::dwm_main(VRAM_PTR, WIDTH, HEIGHT);}
 
 
     loop {

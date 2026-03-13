@@ -3,7 +3,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::ptr::copy_nonoverlapping;
 use spin::mutex::Mutex;
-use crate::{height, width, FRAMEBUFFER_BACK, FRAMEBUFFER_REQUEST, NEEDS_FRAME_UPDATE, SCREEN_HEIGHT, SCREEN_WIDTH, VRAM_PTR};
+use crate::{HEIGHT, WIDTH, FRAMEBUFFER_BACK, FRAMEBUFFER_REQUEST, NEEDS_FRAME_UPDATE, SCREEN_HEIGHT, SCREEN_WIDTH, VRAM_PTR};
 use crate::drawstr::draw_str;
 
 fn swap_buffers() {
@@ -43,16 +43,16 @@ pub fn init_vga() {
         VRAM_PTR = fb.addr() as *mut u32; // ここで「本物の住所」をメモ！
     }
 
-    unsafe {width = fb.width() as usize;}
-    unsafe {height = fb.height() as usize;}
+    unsafe { WIDTH = fb.width() as usize;}
+    unsafe { HEIGHT = fb.height() as usize;}
 
     unsafe {
-        SCREEN_WIDTH = width;
-        SCREEN_HEIGHT = height;
+        SCREEN_WIDTH = WIDTH;
+        SCREEN_HEIGHT = HEIGHT;
 
         // ヒープから (幅 * 高さ * 4バイト) の領域を確保
         // これで Vec が裏画面の実体として固定される
-        FRAMEBUFFER_BACK = Some(vec![0u32; width * height]);
+        FRAMEBUFFER_BACK = Some(vec![0u32; WIDTH * HEIGHT]);
 
         // 念のため、最初は真っ黒（または好きな色）で塗りつぶしておく
         if let Some(ref mut back) = FRAMEBUFFER_BACK {
