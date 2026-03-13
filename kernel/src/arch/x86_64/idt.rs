@@ -63,9 +63,9 @@ pub fn init(offset: i64) {
             (virt as i64 + offset) as u64
         };
 
-        IDT[0].set_handler(divide_by_zero_handler as u64);
-        IDT[14].set_handler(page_fault_handler as u64);
-        IDT[32].set_handler(timer_handler as u64);
+        IDT[0].set_handler(divide_by_zero_handler as *const () as u64);
+        IDT[14].set_handler(page_fault_handler as *const () as u64);
+        IDT[32].set_handler(timer_handler as *const () as u64);
 
         // 3. IDT自体の仮想アドレスを LEA で取得
         let idt_virt: u64;
@@ -75,7 +75,7 @@ pub fn init(offset: i64) {
         // ※注意: size_of_val(&IDT) に修正（&&raw const IDT だとポインタのサイズになってしまいます）
         let idtr = Idtr {
             // limit: (core::mem::size_of_val(&IDT) - 1) as u16, // これを以下に変更
-            limit: (core::mem::size_of::<[IdtEntry; 256]>() - 1) as u16,
+            limit: (size_of::<[IdtEntry; 256]>() - 1) as u16,
             base: to_phys(idt_virt),
         };
 
