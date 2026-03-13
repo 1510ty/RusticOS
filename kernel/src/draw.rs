@@ -1,7 +1,6 @@
-use limine::memory_map::{Entry, EntryType};
+use crate::vga::{push_command, request_update, DrawCommand};
 use crate::{CURRENT_Y, FRAMEBUFFER_BACK, SCREEN_HEIGHT, SCREEN_WIDTH};
-use crate::drawstr::draw_str;
-use crate::vga::{clear_back_buffer, request_update};
+use limine::memory_map::{Entry, EntryType};
 
 pub fn draw_glyph(x_start: u64, y_start: u64, glyph: &[u32; 24]) {
     unsafe {
@@ -44,21 +43,26 @@ pub fn print_hex(value: u64) {
 
 pub fn println(s: &str) {
     unsafe {
-        // 1. スクロール（画面端）判定
-        // SCREEN_HEIGHT も static mut にある想定
+        // 1. スクロール判定（ここは座標管理なのでそのままでOK）
         if CURRENT_Y + 24 > SCREEN_HEIGHT as u64 {
-            clear_back_buffer(0xFFFFFF); // さっき作った一括クリア
+            // 直接消すのではなく「画面クリア」というコマンドを送る
+            push_command(DrawCommand::Clear(0xFFFFFF));
             CURRENT_Y = 0;
         }
 
-        // 2. 描画実行
-        // draw_str も内部で FRAMEBUFFER_BACK (static mut) を見るようにしてあれば
-        // 引数はこれだけで済む
-        draw_str(0, CURRENT_Y, s, 0x000000);
+        // 2. 描画「予約」
+        // 直接 draw_str を呼ばず、キューに積む！
+        push_command(DrawCommand::Text {
+            x: 0,
+            y: CURRENT_Y as usize,
+            color: 0x000000,
+            content: alloc::string::String::from(s), // 所有権を渡す
+        });
 
         // 3. 次の行へ
         CURRENT_Y += 24;
 
+        // request_update() は「描画が必要だよ」というフラグ立てとして残す
         request_update();
     }
 }

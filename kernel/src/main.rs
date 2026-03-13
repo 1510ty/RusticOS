@@ -14,10 +14,11 @@ mod arch {
     pub mod x86_64;
 }
 
+use alloc::string::String;
 use crate::arch::x86_64::apic::init_apic_timer;
 use crate::draw::{print_hex, print_usable_memory_stats, println};
 use crate::memory::init_heap;
-use crate::vga::{clear_back_buffer, init_vga};
+use crate::vga::{clear_back_buffer, init_vga, is_empty, update_screen};
 use alloc::vec::Vec;
 use core::arch::asm;
 use core::panic::PanicInfo;
@@ -44,7 +45,7 @@ pub static mut SCREEN_HEIGHT: usize = 0;
 
 pub static mut CURRENT_Y: u64 = 0;
 
-//static mut NEEDS_FRAME_UPDATE: bool = false;
+pub static mut NEEDS_FRAME_UPDATE: bool = false;
 
 #[global_allocator]
 static ALLOCATOR: LockedHeap = LockedHeap::empty();
@@ -97,22 +98,25 @@ pub extern "C" fn _start() -> ! {
     println("WELCOME TO RUSTIC OS!");
     println("Rustic OS へようこそ!");
 
-    print_usable_memory_stats(mmap);
+    //print_usable_memory_stats(mmap);
 
     loop {
-        #[cfg(target_arch = "x86_64")]
+        // 1. 注文（キュー）があれば即座に調理（レンダリング）
+        // TICK_COUNTを待たずに、何か届いたらすぐ描画するのが今の主流！
+        if !is_empty() {
+            update_screen();
+        }
+
+        // 2. テスト用の「自爆スイッチ」を残すならここ
+        /*
         let t = TICK_COUNT.load(Ordering::Relaxed);
-        if t % 100 == 0 { // 100回に1回表示
-            print_hex(t);
+        if t > 5000 { // 5秒後くらいに爆発
+             unsafe { asm!("xor rax, rax; div rax"); }
         }
-        if t > 1000 { // 10回成功した後に発動...!!
-            unsafe {
-                asm!(
-                "mov rax, 0",
-                "div rax", // 0で割る！
-                );
-            }
-        }
+        */
+
+        // 3. 何もすることがなければ眠る
+        // 割り込み（タイマーやキーボード）が入るまでCPUを休ませる
         unsafe { asm!("hlt") };
     }
 }
