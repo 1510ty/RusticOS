@@ -1,146 +1,94 @@
-use crate::dwm::window::{Window};
+use alloc::vec;
 use alloc::vec::Vec;
-use spin::mutex::Mutex;
-use spin::once::Once;
-use crate::dwm::font::draw_vector_str_generic;
-
-pub static WM: Once<Mutex<WindowManager>> = Once::new();
-
-
-pub fn init(width: usize, height: usize) {
-    WM.call_once(|| {
-        Mutex::new(WindowManager::new(width, height))
-    });
-}
-
-pub fn add_window(window: Window) {
-    if let Some(wm_mutex) = WM.get() {
-        // 2. ロックを確保して
-        let mut wm = wm_mutex.lock();
-        // 3. リストに追加！
-        wm.add_window(window);
-    }
-}
-
+use crate::dwm::window::Window;
 
 pub struct WindowManager {
-    /// 管理しているウィンドウのリスト（奥から手前の順）
-    pub windows: Vec<Window>,
-
-    /// 画面の横幅（ピクセル）
     pub screen_width: usize,
-
-    /// 画面の縦幅（ピクセル）
     pub screen_height: usize,
-
-    /// 画面全体の作業用バッファ（下書きキャンバス）
-    pub screen_buffer: Vec<u32>,
+    pub windows: Vec<Window>,      // 下から順に格納（最後が最前面）
+    pub back_buffer: Vec<u32>,     // 画面全体と同じサイズの描画用メモリ
+    pub mouse_x: isize,
+    pub mouse_y: isize,
 }
 
 impl WindowManager {
-    /// 指定された画面サイズでマネージャーを初期化する
-    pub fn new(width: usize, height: usize) -> Self {
-        // 画面の全ピクセル数を計算
-        let total_pixels = width * height;
 
+
+    pub fn new(width: usize, height: usize) -> Self {
         Self {
-            // 最初はウィンドウは一つもない
-            windows: Vec::new(),
             screen_width: width,
             screen_height: height,
-            // 画面全体のバッファを 0 (黒) で初期化
-            // 13620Hのパワーなら、この巨大な Vec 確保も一瞬です
-            screen_buffer: alloc::vec![0; total_pixels],
+            windows: Vec::new(),
+            // 13620Hなら数MBの確保も一瞬！
+            back_buffer: vec![0x008080; width * height], // 初期色は懐かしのグリーン
+            mouse_x: 0,
+            mouse_y: 0,
         }
     }
 
+    /// 新しいウィンドウをリストに追加（一番手前に来る）
     pub fn add_window(&mut self, window: Window) {
-        // Vec の push を使ってリストの最後に追加
-        // リストの最後にあるものほど「手前」に描画されることになります
         self.windows.push(window);
     }
 
-    fn is_in_screen(&self, x: i32, y: i32) -> bool {
-        x >= 0 && (x as usize) < self.screen_width &&
-            y >= 0 && (y as usize) < self.screen_height
-    }
-
-    pub fn set_pixel(&mut self, x: i32, y: i32, color: u32) {
-        if self.is_in_screen(x, y) {
-            let idx = (y as usize) * self.screen_width + (x as usize);
-            self.screen_buffer[idx] = color;
-        }
-        // 画面外なら何もしない（クラッシュさせない）
-    }
+    /// すべてのウィンドウをバックバッファに書き込む
+    pub fn compose_all(&mut self) {
 
 
-    pub fn compose(&mut self) {
-        // --- STEP 1: 背景の塗りつぶし ---
-        // まっさらな状態から描き始めます
-        self.screen_buffer.fill(0x404040); // 落ち着いたダークグレー
+        // 1. 背景でリセット
+        self.back_buffer.fill(0x008080);
 
-        for i in 0..self.windows.len() {
-            // 描画パラメータと「タイトル」を一旦コピー/取得
-            let (win_x, win_y, win_w, win_h, title) = {
-                let win = &self.windows[i];
-                (win.x, win.y, win.width, win.height, win.title.clone())
-            };
+        // 2. 下にあるウィンドウから順番に「重ね塗り」
+        for win in &self.windows {
+            if !win.is_visible { continue; }
 
-            // A. タイトルバーの描画 (30px)
-            let bar_h = 30;
-            for row in 0..bar_h {
-                for col in 0..win_w {
-                    let sx = win_x + col as i32;
-                    let sy = (win_y - bar_h as i32) + row as i32;
-                    let color = if col > win_w - 30 { 0xE81123 } else { 0xF3F3F3 };
-                    self.set_pixel(sx, sy, color);
+            // 1. タイトルバーの高さを決定
+            let title_height = if win.has_title_bar { 24 } else { 0 };
+
+            // --- A. タイトルバー自体の描画 (OSの仕事) ---
+            if win.has_title_bar {
+                for ty in 0..title_height {
+                    let screen_y = win.y + ty as isize;
+                    if screen_y < 0 || screen_y >= self.screen_height as isize { continue; }
+
+                    for tx in 0..win.width {
+                        let screen_x = win.x + tx as isize;
+                        if screen_x < 0 || screen_x >= self.screen_width as isize { continue; }
+
+                        // アクティブなら青、そうでなければグレーなど
+                        let color = if win.is_active { 0x0000AA } else { 0x555555 };
+                        self.back_buffer[screen_y as usize * self.screen_width + screen_x as usize] = color;
+                    }
                 }
+                // TODO: ここで文字(win.title)を描画する関数を呼ぶ
             }
 
-            // ★ ここでタイトル文字を描画！
-            // タイトルバーが白(0xF3F3F3)なので、文字は黒(0x000000)が見やすいです
-            // 座標(x+8, y-22)あたりが、30pxのバーに対してちょうどいい高さになります
-            // draw_vector_str_generic(
-            //     &mut self.screen_buffer,
-            //     self.screen_width,  // ここを screen_width に！
-            //     self.screen_height, // ここを screen_height に！
-            //     cache,
-            //     (win_x + 8) as usize,
-            //     (win_y - 22) as usize,
-            //     &title,
-            //     16.0,
-            //     0x000000
-            // );
+            // --- B. ウィンドウ本体(buffer)の描画 ---
+            for y in 0..win.height {
+                // 重要：タイトルバーの分だけ下にずらす
+                let screen_y = win.y + (y + title_height) as isize;
+                if screen_y < 0 || screen_y >= self.screen_height as isize { continue; }
 
-            // B. ウィンドウ本体（アプリの中身）の描画
-            // ここで一旦 buffer への参照を借りる
-            let win_buffer = &self.windows[i].buffer;
-            for row in 0..win_h {
-                for col in 0..win_w {
-                    // ここがコツ：一度色の値だけを取り出す
-                    let color = self.windows[i].buffer[row * win_w + col];
+                for x in 0..win.width {
+                    let screen_x = win.x + x as isize;
+                    if screen_x < 0 || screen_x >= self.screen_width as isize { continue; }
 
-                    // ここで self.set_pixel を呼ぶ
-                    // 直前で color を「値」として取り出しているので、もう buffer を借りていない状態になります
-                    self.set_pixel(win_x + col as i32, win_y + row as i32, color);
+                    let color = win.buffer[y * win.width + x];
+                    // 透明度(Alpha)をやるならここで計算。13620Hなら余裕！
+                    self.back_buffer[screen_y as usize * self.screen_width + screen_x as usize] = color;
                 }
             }
         }
     }
 
     pub fn flush(&self, vram_ptr: *mut u32) {
-        // 合成用バッファの先頭ポインタ
-        let src = self.screen_buffer.as_ptr();
+        // 13620H なら copy_from_slice が爆速！
+        // 安全のために、書き込み先をスライスとして扱う
+        let vram_slice = unsafe {
+            core::slice::from_raw_parts_mut(vram_ptr, self.screen_width * self.screen_height)
+        };
 
-        // 全ピクセル数
-        let num_pixels = self.screen_width * self.screen_height;
-
-        unsafe {
-            // メモリを高速にコピー
-            // 13620Hなら、4K解像度でも瞬きする間に終わります
-            core::ptr::copy_nonoverlapping(src, vram_ptr, num_pixels);
-        }
+        // メモリのコピー（これが一番早い）
+        vram_slice.copy_from_slice(&self.back_buffer);
     }
-
-
 }

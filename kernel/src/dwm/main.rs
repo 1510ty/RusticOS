@@ -1,47 +1,28 @@
-use crate::dwm::font::FontCache;
-use crate::dwm::manager;
-use crate::dwm::manager::WM;
+use crate::dwm::manager::WindowManager;
 use crate::dwm::window::Window;
-
-/// DWMスレッドのエントリーポイント
-// kernel/dwm/main.rs
 
 pub fn dwm_main(vram_ptr: *mut u32, width: usize, height: usize) -> ! {
 
-    manager::init(width, height);
 
-    let mut pci_win = Window::new(50, 50, 600, 400);
-    pci_win.buffer.fill(0x222222); // 背景色
+    let mut manager = WindowManager::new(width, height);
 
-    // タイトルを表示 (サイズ 32.0)
+    let mut my_app_window = Window::new(
+        100, 100,    // x, y
+        400, 300,    // width, height
+        "My Cool App", // タイトル
+        true          // OSのタイトルバーを付ける
+    );
 
-    let mut global_font_cache = FontCache::new();
+    my_app_window.fill(0xFFFFFF);
+    my_app_window.fill_rect(50, 50, 100, 100, 0xFF0000);
 
-    pci_win.draw_vector_str_cached(&mut global_font_cache,20, 40, "PCI Device Manager", 32.0, 0x00FF00);
+    manager.add_window(my_app_window);
 
-    // デバイス情報を表示 (サイズ 20.0)
-    // ※ stdがない場合、format! の代わりに自作の文字列変換を使う必要があります
-    pci_win.draw_vector_str_cached(&mut global_font_cache,20, 80, "Bus 00 Dev 02: Intel Graphics", 20.0, 0xFFFFFF);
-    pci_win.draw_vector_str_cached(&mut global_font_cache,20, 110, "Bus 00 Dev 1f: Intel LPC Controller", 20.0, 0xFFFFFF);
-    pci_win.draw_vector_str_cached(&mut global_font_cache,20, 140, "日本語!! いいね～", 20.0, 0xFFFFFF);
-
-
-    manager::add_window(pci_win);
 
     loop {
-        // FONTCACHE の get() は不要になったので削除！
-        if let Some(wm_mutex) = WM.get() {
-            let mut wm = wm_mutex.lock();
+        manager.compose_all();
+        manager.flush(vram_ptr);
 
-            // 2. 合成（内部で勝手にグローバルのキャッシュを見に行くので引数なし！）
-            wm.compose();
-
-            // 3. 転送
-            wm.flush(vram_ptr);
-        }
-
-        // 4. 少し休憩（CPU 100% 張り付きを防止）
-        // ※ OSに sleep 命令があれば入れる。なければ x86 の pause 命令
         core::hint::spin_loop();
     }
 }

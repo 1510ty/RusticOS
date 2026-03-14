@@ -2,9 +2,9 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
 pub static FONT_DATA: &[u8] = include_bytes!("NotoSansJP-Regular.ttf");
 
-extern crate alloc;
 mod font;
 mod drawstr;
 mod vga;
@@ -138,6 +138,7 @@ pub extern "C" fn _start() -> ! {
             }
         }
     }
+
 
     // 終端文字や余計なスペースを処理して表示
     // (そのままprintlnに渡すと、48文字分きっちり出ます)
