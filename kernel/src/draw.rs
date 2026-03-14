@@ -73,28 +73,3 @@ pub fn println(s: &str) {
 
     }
 }
-
-pub fn print_usable_memory_stats(mmap: &[&Entry]) {
-
-    let mut total_usable_bytes: u64 = 0;
-    let mut usable_region_count: u64 = 0;
-
-    for entry in mmap {
-        // Usable（自由に使える）メモリだけを足していく
-        if entry.entry_type == EntryType::USABLE {
-            total_usable_bytes += entry.length;
-            usable_region_count += 1;
-        }
-    }
-
-    // バイトを MiB に変換 (1024 * 1024 = 1,048,576)
-    let total_mib = total_usable_bytes / 1024 / 1024;
-
-    println("--- Memory Stats ---");
-    println("Usable regions found:");
-    print_hex(usable_region_count); // 領域の数
-
-    println("Total Usable Memory (MiB):");
-    print_hex(total_mib); // 合計容量（16進数で出ちゃうけど今はOK！）
-    println("--------------------");
-}

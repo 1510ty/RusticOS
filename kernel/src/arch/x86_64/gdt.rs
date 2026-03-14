@@ -2,28 +2,28 @@ use crate::println;
 use core::arch::asm;
 
 
-#[repr(C, packed)]
-pub struct GdtEntry {
-    limit_low: u16,
-    base_low: u16,
-    base_mid: u8,
-    access: u8,
-    limit_high_flags: u8,
-    base_high: u8,
-}
+// #[repr(C, packed)]
+// pub struct GdtEntry {
+//     limit_low: u16,
+//     base_low: u16,
+//     base_mid: u8,
+//     access: u8,
+//     limit_high_flags: u8,
+//     base_high: u8,
+// }
 
-impl GdtEntry {
-    pub const fn new(access: u8, flags: u8) -> Self {
-        GdtEntry {
-            limit_low: 0xFFFF,        // 64bitモードでは無視されるが0xFFFFが通例
-            base_low: 0,
-            base_mid: 0,
-            access,                   // 0x9A (Code), 0x92 (Data)
-            limit_high_flags: flags,  // 0xAF (Code), 0xCF (Data)
-            base_high: 0,
-        }
-    }
-}
+// impl GdtEntry {
+//     pub const fn new(access: u8, flags: u8) -> Self {
+//         GdtEntry {
+//             limit_low: 0xFFFF,        // 64bitモードでは無視されるが0xFFFFが通例
+//             base_low: 0,
+//             base_mid: 0,
+//             access,                   // 0x9A (Code), 0x92 (Data)
+//             limit_high_flags: flags,  // 0xAF (Code), 0xCF (Data)
+//             base_high: 0,
+//         }
+//     }
+// }
 
 //不要?
 // #[repr(C, packed)]

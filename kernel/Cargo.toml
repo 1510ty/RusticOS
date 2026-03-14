@@ -9,7 +9,7 @@ linked_list_allocator = "0.10.5"
 common = { path = "../common" }
 spin = "0.10.0"
 x86_64 = "0.15.4"
-ab_glyph = "0.2.32"
+ab_glyph = {version = "0.2.32", default-features = false, features = ["libm"]}
 hashbrown = "0.16.1"
 
 # [[bin]] セクションに変更します

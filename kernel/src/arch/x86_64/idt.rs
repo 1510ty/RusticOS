@@ -59,7 +59,7 @@ pub fn init(offset: i64) {
     unsafe {
         // 1. 仮想アドレスを物理アドレスに変換するヘルパー
         // offset = phys_base - virt_base なので、足すだけで物理アドレスになります
-        let to_phys = |virt: u64| -> u64 {
+        let _to_phys = |virt: u64| -> u64 {
             (virt as i64 + offset) as u64
         };
 

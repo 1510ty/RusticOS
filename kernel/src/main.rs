@@ -22,7 +22,7 @@ use crate::arch::x86_64::apic::init_apic_timer;
 use crate::arch::x86_64::timer;
 use crate::draw::{print_hex, println};
 use crate::memory::init_heap;
-use crate::vga::{clear_back_buffer, init_vga, is_empty, update_screen};
+use crate::vga::{clear_back_buffer, init_vga, update_screen};
 use alloc::string::ToString;
 use alloc::vec::Vec;
 use core::arch::asm;
@@ -81,24 +81,19 @@ pub extern "C" fn _start() -> ! {
     clear_back_buffer(0xFFFFFF);
 
     println("Starting RusticOS...");
-    println("RusticOSを起動しています...");
 
-    println("Limineから情報を取得しています...");
+    println("Fetching information from Limine...");
     //Limineへの実行アドレスのリクエスト
     let response = EXECUTABLE_ADDRESS_REQUEST.get_response().unwrap();
 
-    //メモリマップ取得
-    let mmap_response = MEMORY_MAP_REQUEST.get_response().unwrap();
-    let mmap = mmap_response.entries();
-
-    println("Limineから情報を取得しました!");
+    println("Done fetching Limine boot information.");
 
     #[cfg(target_arch = "x86_64")]
     arch::x86_64::init(response); // x86_64の時だけ実行
     #[cfg(target_arch = "x86_64")]
     println("GDT AND IDT OK!");
 
-    println("メモリ確保の初期化が完了しました!");
+    println("Memory allocator initialized successfully.");
 
     println("Timer initializing...");
     timer::init();
@@ -126,7 +121,7 @@ pub extern "C" fn _start() -> ! {
 
     // CPUIDの 0x80000002, 0x80000003, 0x80000004 を順番に実行
     for i in 0u32..3u32 { // 明示的にu32で回す
-        let res = unsafe { __cpuid(0x80000002 + i) };
+        let res =__cpuid(0x80000002 + i);
         let registers = [res.eax, res.ebx, res.ecx, res.edx];
 
         for (j, &reg) in registers.iter().enumerate() {
@@ -140,8 +135,6 @@ pub extern "C" fn _start() -> ! {
     }
 
 
-    // 終端文字や余計なスペースを処理して表示
-    // (そのままprintlnに渡すと、48文字分きっちり出ます)
     let name = core::str::from_utf8(&brand_string).unwrap_or("Unknown CPU");
     println(name.trim());
 
@@ -153,24 +146,6 @@ pub extern "C" fn _start() -> ! {
 
     unsafe{dwm::main::dwm_main(VRAM_PTR, WIDTH, HEIGHT);}
 
-
-    loop {
-        // 1. 注文（キュー）があれば即座に調理（レンダリング）
-        // TICK_COUNTを待たずに、何か届いたらすぐ描画するのが今の主流！
-        if !is_empty() {
-            update_screen();
-        }
-
-        #[cfg(target_arch = "x86_64")]
-        let t = TICK_COUNT.load(Ordering::Relaxed);
-        if t % 100 == 0 { // 100回に1回表示
-
-        }
-
-
-        unsafe { asm!("hlt") };
-
-    }
 }
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
