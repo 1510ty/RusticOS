@@ -344,6 +344,69 @@ pub fn init_xhci(manager: &mut dwm::manager::WindowManager) {
             // 本来はタイムアウト処理が必要ですが、デバッグ中は無限ループでOK
         }
 
+        // --- 12. Input Context の確保 ---
+        // Input Context は最低でも 33 * 32 バイト (約1KB) 必要です
+        // これも 64バイト境界 or 4KB境界である必要があります
+        let input_context_phys = memory::allocate_phys_64(); // 4KB確保
+        let input_context_virt = (input_context_phys + hhdm_offset) as *mut u32;
+
+        unsafe {
+            // 全て 0 で初期化
+            core::ptr::write_bytes(input_context_virt as *mut u8, 0, 1024);
+
+            // --- A. Input Control Context (先頭 32 bytes) ---
+            // どの設定を有効にするか指定。今回は「Slot」と「Endpoint 0」を有効にする
+            // Bit 0 = Drop Context (今回は使わないので 0)
+            // Bit 1 = Add Context (Slot)
+            // Bit 2 = Add Context (Endpoint 0)
+            core::ptr::write_volatile(input_context_virt.add(1), 0x0000_0006);
+
+            // --- B. Slot Context (次 32 bytes) ---
+            // デバイス全体の情報を書く
+            let slot_ctx = input_context_virt.add(8); // インデックス8から
+            // Route String=0, Speed=(さっき調べた値), Context Entries=1 (EP0のみ)
+            // ここではとりあえず汎用的な値をセット
+            let context_entries = 1;
+            let speed = 4; // とりあえず SuperSpeed (本来は PORTSC から取得)
+            core::ptr::write_volatile(slot_ctx.add(0), (context_entries << 27) | (speed << 20));
+            // Root Hub Port Number (刺さっているポート番号)
+            core::ptr::write_volatile(slot_ctx.add(1), (1 << 16)); // ポート1と仮定
+
+            // --- C. Endpoint 0 Context (次 32 bytes) ---
+            // USBの制御用エンドポイントの設定
+            let ep0_ctx = input_context_virt.add(16); // インデックス16から
+            // EP Type = Control, Max Packet Size = 512 (SuperSpeed時)
+            core::ptr::write_volatile(ep0_ctx.add(1), (3 << 3) | (512 << 16));
+            // ここに Transfer Ring (データ転送用リング) のアドレスを書く必要がある...
+        }
+
+        win.draw_text("Input Context Prepared!", 20, 40, 14.0, 0x00FF00, f);
+
+        // --- 13. Transfer Ring (EP0用) の確保 ---
+        let ep0_ring_phys = memory::allocate_phys_64(); // 4KB確保
+        let ep0_ring_virt = (ep0_ring_phys + hhdm_offset) as *mut u32;
+
+        unsafe {
+            // ゼロクリア
+            core::ptr::write_bytes(ep0_ring_virt as *mut u8, 0, 4096);
+        }
+
+        // --- 14. Input Context に Transfer Ring の住所を書く ---
+        // さっき作った ep0_ctx (index 16番) に、このリングのアドレスを紐付ける
+        unsafe {
+            let ep0_ctx = input_context_virt.add(16);
+
+            // TR Dequeue Pointer (64bit)
+            // Bit 0 は DCS (Dequeue Cycle State)。最初は 1 にしておくのが定石
+            core::ptr::write_volatile(ep0_ctx.add(2), ep0_ring_phys as u32 | 1);
+            core::ptr::write_volatile(ep0_ctx.add(3), (ep0_ring_phys >> 32) as u32);
+
+            // 平均 TRB 長 (通常 8 でOK)
+            core::ptr::write_volatile(ep0_ctx.add(4), 8);
+        }
+
+        win.draw_text("EP0 Transfer Ring Linked!", 20, 70, 14.0, 0x00FF00, f);
+
         manager.add_window(win);
 
     }
