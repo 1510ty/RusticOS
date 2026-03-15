@@ -22,7 +22,6 @@ mod arch {
 use crate::arch::x86_64::apic::init_apic_timer;
 use crate::arch::x86_64::timer;
 use crate::draw::{print_hex, println};
-use crate::memory::init_heap;
 use crate::vga::{clear_back_buffer, init_vga, update_screen};
 use alloc::string::ToString;
 use alloc::vec::Vec;
@@ -79,7 +78,7 @@ pub extern "C" fn _start() -> ! {
     unsafe {HHDM_OFFSET = HHDM_REQUEST.get_response().unwrap().offset();}
     let hhdm_offset;
     unsafe {hhdm_offset = HHDM_OFFSET;}
-    init_heap(hhdm_offset);
+    memory::init_memory(hhdm_offset);
 
     init_vga();
 

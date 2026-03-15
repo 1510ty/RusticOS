@@ -2,23 +2,14 @@ use crate::*;
 
 pub fn init_xhci(manager: &mut dwm::manager::WindowManager) {
     let mut win = dwm::window::Window::new(400, 40, 500, 730, "xHCI Scanner", true);
-
     let f = &mut manager.font_manager;
-
     let hhdm_offset = unsafe { HHDM_OFFSET };
 
-
-
-    // --- Step 1: PCI Scan & MMIO Setup ---
-
-    let mut xhci_mmio_base: u64 = 0;
-
-
+    let mut xhci_phys_base: u64 = 0;
 
     'scan: for bus in 0..256u32 {
         for slot in 0..32u32 {
             for func in 0..8u32 {
-                // 関数に渡す時だけ u8 にキャスト
                 let vendor_id = pci::pci_config_read_32(bus as u8, slot as u8, func as u8, 0x00) & 0xFFFF;
                 if vendor_id == 0xFFFF { continue; }
 
@@ -27,65 +18,69 @@ pub fn init_xhci(manager: &mut dwm::manager::WindowManager) {
                 let sub = (class_rev >> 16) & 0xFF;
                 let prog = (class_rev >> 8) & 0xFF;
 
+                // xHCI Controller 発見
                 if class == 0x0C && sub == 0x03 && prog == 0x30 {
                     win.draw_text("xHCI Found!", 20, 40, 16.0, 0x00FF00, f);
 
-                    // i を u32 で回すと計算が楽です
-                    for i in 0..6u32 {
-                        let bar_offset = 0x10 + (i * 4);
-                        let bar_val = pci::pci_config_read_32(bus as u8, slot as u8, func as u8, bar_offset as u8);
+                    // --- [Step 1] BAR0/BAR1 の読み取りと住所の割り当て ---
+                    let mut bar0 = pci::pci_config_read_32(bus as u8, slot as u8, func as u8, 0x10);
+                    let mut bar1 = pci::pci_config_read_32(bus as u8, slot as u8, func as u8, 0x14);
 
-                        let y_pos = (80 + i * 25) as i32; // 行間を少し広げました
-                        win.draw_text("BAR", 20, y_pos as usize, 14.0, 0xAAAAAA, f);
-                        win.draw_hex(i as u64 as u32, 60, y_pos, f);
-                        win.draw_hex(bar_val as u64 as u32, 120, y_pos, f);
+                    // QEMU対策: BAR0の住所部分が空っぽ (0) の場合
+                    if (bar0 & !0xF) == 0 {
+                        win.draw_text("QEMU detected: Allocating BAR...", 20, 60, 14.0, 0xFFA500, f);
+
+                        let target_addr: u64 = 0xFE00_0000;
+                        // 下位32bitを書き込み (フラグ 0x4 等を保持)
+                        pci::pci_config_write_32(bus as u8, slot as u8, func as u8, 0x10, (target_addr as u32) | (bar0 & 0xF));
+
+                        // 64-bit BAR (Bit 2 が 1) なら上位32bit(BAR1)も書く
+                        if (bar0 & 0x4) != 0 {
+                            pci::pci_config_write_32(bus as u8, slot as u8, func as u8, 0x14, (target_addr >> 32) as u32);
+                        }
+
+                        // 書き込んだ後に再読込
+                        bar0 = pci::pci_config_read_32(bus as u8, slot as u8, func as u8, 0x10);
+                        bar1 = pci::pci_config_read_32(bus as u8, slot as u8, func as u8, 0x14);
                     }
 
-                    // PCI Commandレジスタの確認
-                    let pci_cmd = pci::pci_config_read_32(bus as u8, slot as u8, func as u8, 0x04);
-                    win.draw_text("PCI CMD:", 20, 240, 14.0, 0xFFFF00, f);
-                    win.draw_hex(pci_cmd as u64 as u32, 120, 240, f);
+                    // --- [Step 2] PCI Command レジスタを ON にする ---
+                    let mut pci_cmd = pci::pci_config_read_32(bus as u8, slot as u8, func as u8, 0x04);
+                    // Bit 1: Memory Space, Bit 2: Bus Master を有効化 (0x06)
+                    pci_cmd |= 0x06;
+                    pci::pci_config_write_32(bus as u8, slot as u8, func as u8, 0x04, pci_cmd);
 
-                    // これで画面が止まって見えるはず
+                    // --- [Step 3] 最終的な物理アドレスの確定 ---
+                    xhci_phys_base = if (bar0 & 0x4) != 0 {
+                        ((bar1 as u64) << 32) | ((bar0 & !0xF) as u64)
+                    } else {
+                        (bar0 & !0xF) as u64
+                    };
+
+                    // 画面に結果を表示
+                    for i in 0..2 {
+                        let bar_offset = 0x10 + (i * 4);
+                        let bar_val = pci::pci_config_read_32(bus as u8, slot as u8, func as u8, bar_offset as u8);
+                        let y_pos = (100 + i * 25) as i32;
+                        win.draw_text("BAR", 20, y_pos as usize, 14.0, 0xAAAAAA, f);
+                        win.draw_hex(i as u32, 100, y_pos, f);
+                        win.draw_hex(bar_val, 270, y_pos, f);
+                    }
+
+                    win.draw_text("Final Phys:", 20, 160, 14.0, 0xFFFF00, f);
+                    win.draw_hex((xhci_phys_base >> 32) as u32, 150, 160, f); // 上位
+                    win.draw_hex(xhci_phys_base as u32, 270, 160, f);       // 下位
+
                     break 'scan;
                 }
             }
         }
     }
 
-    let mmap_response = MEMORY_MAP_REQUEST.get_response().unwrap();
-    let mmap = mmap_response.entries();
-
-    // 全エントリの中で、最も高い物理アドレスを探す
-    let last_entry = mmap.iter()
-        .max_by_key(|e| e.base + e.length)
-        .unwrap();
-
-    let max_phys = last_entry.base + last_entry.length;
-
-    win.draw_hex(max_phys as u32, 20, 300, f);
-
-    manager.add_window(win);
-    return;
-
-    if xhci_mmio_base != 0 {
-
-        // Capability Register の最初の4バイトを読み取る
-
-        // 下位8ビットが CAPLENGTH (Operational Regs までのオフセット)
-
-        let cap_reg = unsafe { core::ptr::read_volatile(xhci_mmio_base as *const u32) };
-
-
-        win.draw_text("Cap Reg (HCIVERSION):", 20, 80, 14.0, 0xFFFFFF, f);
-
-        win.draw_hex(cap_reg as u64 as u32, 200, 80, f);
-
-
-
-        // QEMUなら大抵 0x01000020 (CAPLENGTH=0x20, HCIVERSION=0x0100) が出ます
-
+    // --- ここから先は実機・QEMU共通の「ページマッピング」フェーズへ ---
+    if xhci_phys_base != 0 {
+        // 例の PageTableManager でマップして、read_volatile する処理をここに書く
     }
 
-
+    manager.add_window(win);
 }
