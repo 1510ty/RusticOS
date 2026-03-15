@@ -1,3 +1,4 @@
+use alloc::alloc::alloc_zeroed;
 use limine::memory_map::EntryType;
 use crate::{ALLOCATOR, MEMORY_MAP_REQUEST};
 
@@ -111,4 +112,27 @@ pub fn get_current_pml4(hhdm_offset: u64) -> &'static mut PageTable {
     }
     let pml4_phys = cr3 & 0x000F_FFFF_FFFF_F000;
     unsafe { &mut *((pml4_phys + hhdm_offset) as *mut PageTable) }
+}
+
+/// xHCI等のデバイスが使用する、物理的に連続したメモリを確保して物理アドレスを返す
+pub fn allocate_phys_64() -> u64 {
+    let hhdm_offset = unsafe { crate::HHDM_OFFSET };
+
+    // 4KB(1ページ)を確保。RustのLayoutを使ってアライメントを保証する。
+    // xHCIは64バイトアライメントを要求するが、4096なら当然満たされる。
+    let layout = core::alloc::Layout::from_size_align(4096, 4096).unwrap();
+
+    unsafe {
+        // Rustのグローバルアロケータ(ALLOCATOR)から仮想アドレスを確保
+        let virt_ptr = alloc_zeroed(layout);
+        if virt_ptr.is_null() {
+            panic!("allocate_phys_64: Out of memory");
+        }
+
+        // 仮想アドレスから物理アドレスに変換 (HHDM内なのでオフセットを引くだけ)
+        let virt_addr = virt_ptr as u64;
+        let phys_addr = virt_addr - hhdm_offset;
+
+        phys_addr
+    }
 }
