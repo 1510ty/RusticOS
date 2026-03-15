@@ -11,7 +11,8 @@ mod vga;
 mod draw;
 mod memory;
 mod dwm;
-
+mod xHCI;
+mod pci;
 
 #[cfg(target_arch = "x86_64")]
 mod arch {
@@ -64,6 +65,8 @@ pub static mut VRAM_PTR: *mut u32 = core::ptr::null_mut();
 pub static mut WIDTH: usize = 0;
 pub static mut HEIGHT: usize = 0;
 
+pub static mut HHDM_OFFSET: u64 = 0;
+
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
 
@@ -73,7 +76,9 @@ pub extern "C" fn _start() -> ! {
 
     timer::record_start_time();
 
-    let hhdm_offset = HHDM_REQUEST.get_response().unwrap().offset();
+    unsafe {HHDM_OFFSET = HHDM_REQUEST.get_response().unwrap().offset();}
+    let hhdm_offset;
+    unsafe {hhdm_offset = HHDM_OFFSET;}
     init_heap(hhdm_offset);
 
     init_vga();
@@ -117,30 +122,15 @@ pub extern "C" fn _start() -> ! {
 
 
     println("System Info");
-    let mut brand_string = [0u8; 48];
 
-    // CPUIDの 0x80000002, 0x80000003, 0x80000004 を順番に実行
-    for i in 0u32..3u32 { // 明示的にu32で回す
-        let res =__cpuid(0x80000002 + i);
-        let registers = [res.eax, res.ebx, res.ecx, res.edx];
-
-        for (j, &reg) in registers.iter().enumerate() {
-            let bytes = reg.to_le_bytes();
-            for k in 0..4 {
-                // ここ！計算結果全体を () で囲って as usize にする
-                let index = ((i * 16) + (j as u32 * 4) + k as u32) as usize;
-                brand_string[index] = bytes[k];
-            }
-        }
-    }
-
-
-    let name = core::str::from_utf8(&brand_string).unwrap_or("Unknown CPU");
-    println(name.trim());
+    println(arch::x86_64::getsysteminfo::get_cpu_name().as_str());
 
     //print_usable_memory_stats(mmap);
 
+
     println("Starting DWM...");
+
+    clear_back_buffer(0);
 
     update_screen();
 

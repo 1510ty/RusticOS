@@ -1,6 +1,7 @@
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
+use crate::dwm::font::FontManager;
 
 pub struct Window {
     // --- 基本位置・サイズ ---
@@ -20,7 +21,6 @@ pub struct Window {
 
     // --- データバッファ ---
     pub buffer: Vec<u32>,
-
 }
 
 impl Window {
@@ -96,6 +96,7 @@ impl Window {
                 if alpha == 0 { continue; }
 
                 if alpha == 255 {
+
                     self.set_pixel(px, py, color);
                 } else {
                     // アルファブレンディング
@@ -163,6 +164,26 @@ impl Window {
 
         // 実際の描画処理（先に作った draw_text を呼ぶ）
         self.draw_text(text, x, y + offset_y, size, color, font_manager);
+    }
+    pub fn draw_hex(&mut self, val: u32, x: i32, y: i32, font: &mut FontManager) {
+        let mut buf = [0u8; 10];
+        buf[0] = b'0';
+        buf[1] = b'x';
+
+        for i in 0..8 {
+            // 4ビットずつ取り出して16進文字に変換
+            let nibble = ((val >> ((7 - i) * 4)) & 0xF) as u8;
+            buf[i + 2] = if nibble < 10 {
+                b'0' + nibble
+            } else {
+                b'A' + (nibble - 10)
+            };
+        }
+
+        // byte配列をstrに変換（unsafeを使わず変換）
+        if let Ok(s) = core::str::from_utf8(&buf) {
+            self.draw_text(s, x.try_into().unwrap(), y as usize, 24.0, 0xFFFFFF, font);
+        }
     }
 
 }

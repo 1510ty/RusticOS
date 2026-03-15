@@ -1,6 +1,7 @@
 use crate::{print_hex, println, TICK_COUNT};
 use core::arch::asm;
 use core::sync::atomic::Ordering;
+use x86_64::instructions::hlt;
 
 #[repr(C, packed)]
 #[derive(Copy, Clone)]
@@ -67,6 +68,7 @@ pub fn init(offset: i64) {
         IDT[14].set_handler(page_fault_handler as *const () as u64);
         IDT[32].set_handler(timer_handler as *const () as u64);
 
+
         // 3. IDT自体の仮想アドレスを LEA で取得
         let idt_virt: u64;
         asm!("lea {}, [rip + {}]", out(reg) idt_virt, sym IDT);
@@ -126,3 +128,4 @@ extern "x86-interrupt" fn timer_handler(_frame: InterruptStackFrame) {
         core::ptr::write_volatile(0xfee000b0 as *mut u32, 0);
     }
 }
+
