@@ -182,7 +182,7 @@ impl Window {
 
         // byte配列をstrに変換（unsafeを使わず変換）
         if let Ok(s) = core::str::from_utf8(&buf) {
-            self.draw_text(s, x.try_into().unwrap(), y as usize, 24.0, 0xFFFFFF, font);
+            self.draw_text(s, x.try_into().unwrap(), y as usize, 20.0, 0xFFFFFF, font);
         }
     }
 
