@@ -10,6 +10,7 @@ pub fn init_xhci(manager: &mut dwm::manager::WindowManager) {
     let hhdm_offset = unsafe { HHDM_OFFSET };
 
     let mut xhci_phys_base: u64 = 0;
+    let mut found_primary = false; // 0x14 を見つけたかフラグ
 
     'scan: for bus in 0..256u32 {
         for slot in 0..32u32 {
@@ -24,58 +25,47 @@ pub fn init_xhci(manager: &mut dwm::manager::WindowManager) {
 
                 // xHCI Controller 発見
                 if class == 0x0C && sub == 0x03 && prog == 0x30 {
-                    // win.draw_text("xHCI Found!", 20, 40, 16.0, 0x00FF00, f);
 
-                    // --- [Step 1] BAR0/BAR1 の読み取りと住所の割り当て ---
+                    // --- [Step 1] BAR0/BAR1 の読み込み ---
                     let mut bar0 = pci::pci_config_read_32(bus as u8, slot as u8, func as u8, 0x10);
                     let mut bar1 = pci::pci_config_read_32(bus as u8, slot as u8, func as u8, 0x14);
 
-                    // QEMU対策: BAR0の住所部分が空っぽ (0) の場合
+                    // QEMU対策
                     if (bar0 & !0xF) == 0 {
-                        // win.draw_text("QEMU detected: Allocating BAR...", 20, 60, 14.0, 0xFFA500, f);
-
                         let target_addr: u64 = 0xFE00_0000;
-                        // 下位32bitを書き込み (フラグ 0x4 等を保持)
                         pci::pci_config_write_32(bus as u8, slot as u8, func as u8, 0x10, (target_addr as u32) | (bar0 & 0xF));
-
-                        // 64-bit BAR (Bit 2 が 1) なら上位32bit(BAR1)も書く
                         if (bar0 & 0x4) != 0 {
                             pci::pci_config_write_32(bus as u8, slot as u8, func as u8, 0x14, (target_addr >> 32) as u32);
                         }
-
-                        // 書き込んだ後に再読込
                         bar0 = pci::pci_config_read_32(bus as u8, slot as u8, func as u8, 0x10);
                         bar1 = pci::pci_config_read_32(bus as u8, slot as u8, func as u8, 0x14);
                     }
 
                     // --- [Step 2] PCI Command レジスタを ON にする ---
                     let mut pci_cmd = pci::pci_config_read_32(bus as u8, slot as u8, func as u8, 0x04);
-                    // Bit 1: Memory Space, Bit 2: Bus Master を有効化 (0x06)
                     pci_cmd |= 0x06;
                     pci::pci_config_write_32(bus as u8, slot as u8, func as u8, 0x04, pci_cmd);
 
-                    // --- [Step 3] 最終的な物理アドレスの確定 ---
-                    xhci_phys_base = if (bar0 & 0x4) != 0 {
+                    // --- [Step 3] 物理アドレスの確定 ---
+                    let current_phys = if (bar0 & 0x4) != 0 {
                         ((bar1 as u64) << 32) | ((bar0 & !0xF) as u64)
                     } else {
                         (bar0 & !0xF) as u64
                     };
 
-                    // 画面に結果を表示
-                    for i in 0..2 {
-                        let bar_offset = 0x10 + (i * 4);
-                        let bar_val = pci::pci_config_read_32(bus as u8, slot as u8, func as u8, bar_offset as u8);
-                        let y_pos = (100 + i * 25) as i32;
-                        // win.draw_text("BAR", 20, y_pos as usize, 14.0, 0xAAAAAA, f);
-                        // win.draw_hex(i as u32, 100, y_pos, f);
-                        // win.draw_hex(bar_val, 270, y_pos, f);
+                    // --- [Step 4] 選別ロジック ---
+                    // 本命 (Slot 0x14) が見つかったらそれを採用して即終了
+                    if slot == 0x14 {
+                        xhci_phys_base = current_phys;
+                        found_primary = true;
+                        break 'scan;
                     }
 
-                    // win.draw_text("Final Phys:", 20, 160, 14.0, 0xFFFF00, f);
-                    // win.draw_hex((xhci_phys_base >> 32) as u32, 150, 160, f); // 上位
-                    // win.draw_hex(xhci_phys_base as u32, 270, 160, f);       // 下位
-
-                    break 'scan;
+                    // 初めて見つけたデバイスなら、とりあえずキープ（予備）
+                    if !found_primary {
+                        xhci_phys_base = current_phys;
+                        // ここでは break しない！ (後のループで 0x14 が見つかるかもしれないから)
+                    }
                 }
             }
         }
@@ -92,9 +82,18 @@ pub fn init_xhci(manager: &mut dwm::manager::WindowManager) {
 
         // マップ実行：Present(1) | Writable(2) | Write-through(8) | Cache Disable(16) = 0x1B
         // MMIOなのでキャッシュを無効化するのが鉄則です
-        unsafe {
-            page_manager.map_page(xhci_virt, xhci_phys_base, 0x1B);
+        // unsafe {
+        //     page_manager.map_page(xhci_virt, xhci_phys_base, 0x1B);
+        // }
+
+        for i in 0..512 {
+            let offset = (i as u64) * 4096;
+            unsafe {
+                page_manager.map_page(xhci_virt + offset, xhci_phys_base + offset, 0x1B);
+            }
         }
+
+
 
         // win.draw_text("Mapping Successful!", 20, 200, 14.0, 0x00FF00, f);
 
@@ -122,6 +121,39 @@ pub fn init_xhci(manager: &mut dwm::manager::WindowManager) {
         let op_reg_virt = xhci_virt + cap_length as u64;
         // win.draw_text("OP REG Start:", 20, 330, 14.0, 0x00FFFF, f);
         // win.draw_hex(op_reg_virt as u64 as u32, 200, 330, f);
+        
+        //所有権の奪還
+
+        let hccparams1 = unsafe { core::ptr::read_volatile((xhci_virt + 0x10) as *const u32) };
+        let xecp = (hccparams1 >> 16) & 0xFFFF;
+
+        if xecp != 0 {
+            let mut addr = xhci_virt + (xecp << 2) as u64;
+            loop {
+                let cap = unsafe { core::ptr::read_volatile(addr as *const u32) };
+                let cap_id = cap & 0xFF;
+
+                if cap_id == 1 { // USB Legacy Support
+                    // OS Ownership を主張
+                    let mut val = cap;
+                    val |= 1 << 24;
+                    unsafe { core::ptr::write_volatile(addr as *mut u32, val); }
+
+                    // BIOSが手を離すのを待つ
+                    while (unsafe { core::ptr::read_volatile(addr as *const u32) } & (1 << 16)) != 0 {
+                        core::hint::spin_loop();
+                    }
+                    // win.draw_text("OS Ownership Claimed!", 20, 350, 14.0, 0x00FF00, f);
+                    break;
+                }
+
+                let next = (cap >> 8) & 0xFF;
+                if next == 0 { break; }
+                addr += (next << 2) as u64;
+            }
+        }
+
+
 
 
         let usb_cmd_addr = op_reg_virt as *mut u32;
@@ -204,11 +236,45 @@ pub fn init_xhci(manager: &mut dwm::manager::WindowManager) {
         unsafe { core::ptr::write_volatile(crcr_reg, cmd_ring_phys | 1); }
 
         // (C) 最大スロット数の設定 (CONFIGレジスタ)
-        let config_reg = (op_reg_virt + 0x38) as *mut u32;
+        // let config_reg = (op_reg_virt + 0x38) as *mut u32;
+        let config_reg = (op_reg_virt as usize + 0x38) as *mut u32;
         unsafe {
             let mut conf = core::ptr::read_volatile(config_reg);
             conf = (conf & !0xFF) | (max_slots as u32);
             core::ptr::write_volatile(config_reg, conf);
+        }
+
+        // ========================================================
+        // 【ここに追加！】 (D) Event Ring の設定
+        // ========================================================
+        // 1. Event Ring Segment Table (ERST) の確保 (64バイトアライン)
+        let erst_phys = memory::allocate_phys_64();
+        let erst_virt = (erst_phys + hhdm_offset) as *mut u64;
+
+        // 2. Event Ring 本体 (中身) の確保
+        let event_ring_phys = memory::allocate_phys_64();
+        // (前述した通り、ここで 0 クリアしておくと Cycle Bit 判定が安定します)
+
+        // 3. ERST の 1番目のエントリーを設定 (Spec 6.5)
+        unsafe {
+            core::ptr::write_volatile(erst_virt.add(0), event_ring_phys); // Ringの物理アドレス
+            core::ptr::write_volatile(erst_virt.add(1), 128);             // Segment Size (TRBの数)
+        }
+
+        // --- ?. Runtime Register の特定 ---
+        let rtsoff = unsafe { core::ptr::read_volatile((xhci_virt + 0x18) as *const u32) };
+        let runtime_base = xhci_virt + (rtsoff & !0x1F) as u64;
+
+
+        let ir0_virt = runtime_base + 0x20; // Interrupter 0 Register Set
+        unsafe {
+            // ERST のサイズを 1 に設定
+            core::ptr::write_volatile((ir0_virt + 0x08) as *mut u32, 1);
+            // ERDP (Dequeue Pointer) の初期値
+            // core::ptr::write_volatile((ir0_virt + 0x18) as *mut u64, event_ring_phys | 0x8);
+            core::ptr::write_volatile((ir0_virt + 0x18) as *mut u64, event_ring_phys | 0x8);
+            // ERSTBA (Table Base Address) の設定
+            core::ptr::write_volatile((ir0_virt + 0x10) as *mut u64, erst_phys);
         }
 
         // win.draw_text("DCBAA & Command Ring Set.", 20, 440, 14.0, 0x00FF00, f);
@@ -222,18 +288,6 @@ pub fn init_xhci(manager: &mut dwm::manager::WindowManager) {
         // win.draw_text("xHCI is now RUNNING!", 20, 480, 14.0, 0xFFFF00, f);
 
         brain_muscle_wait(); //待機
-
-        // --- 8. Runtime Register の特定 ---
-        let rtsoff = unsafe { core::ptr::read_volatile((xhci_virt + 0x18) as *const u32) };
-        let runtime_base = xhci_virt + (rtsoff & !0x1F) as u64;
-
-        for i in 0..16 { // とりあえず64KB分 (16ページ)
-            let offset = i * 4096;
-            unsafe {
-                page_manager.map_page(xhci_virt + offset, xhci_phys_base + offset, 0x1B);
-            }
-        }
-
 
 
         // --- 9. メモリ確保とゼロ初期化 ---
@@ -312,6 +366,10 @@ pub fn init_xhci(manager: &mut dwm::manager::WindowManager) {
         // win.draw_text("Event Ring Initialized (v2)!", 20, 500, 14.0, 0x00FF00, f);
 
 
+        let status = unsafe { core::ptr::read_volatile(usb_sts_addr) };
+        win.draw_text("USBSTS before EnableSlot:", 20, 480, 14.0, 0xFFFF00, f);
+        win.draw_hex(status, 250, 480, f);
+
         // --- 11. Enable Slot コマンドの作成 ---
         // Command Ring の先頭（仮想アドレス）を取得
         let cmd_ring_virt = (cmd_ring_phys + hhdm_offset) as *mut u32;
@@ -347,32 +405,53 @@ pub fn init_xhci(manager: &mut dwm::manager::WindowManager) {
 
         win.draw_text("Waiting for Command Completion...", 20, 440, 14.0, 0xAAAAAA, f);
 
+        brain_muscle_wait(); //待機
+
         // Event Ring の先頭を監視
         let event_ring_virt = (event_ring_phys + hhdm_offset) as *mut u32;
 
         let mut slot_id;
 
+        let mut current_index = 0; // Event Ring 内の現在位置（TRB単位）
+
         loop {
-            // Event TRB の 4つ目の u32 (index 3) の Bit 0 (Cycle Bit) が 1 になるのを待つ
-            let status = unsafe { core::ptr::read_volatile(event_ring_virt.add(3)) };
+            // 16バイト(u32×4)おきに TRB をチェックする
+            let base_ptr = unsafe { event_ring_virt.add(current_index * 4) };
+            let status = unsafe { core::ptr::read_volatile(base_ptr.add(3)) };
 
+            // Cycle Bit が 1 か確認
             if (status & 0x01) != 0 {
-                // 返ってきた！
-                let completion_code = (unsafe { core::ptr::read_volatile(event_ring_virt.add(2)) } >> 24) & 0xFF;
-                slot_id = (status >> 24) & 0xFF; // 割り振られた Slot ID
+                let trb_type = (status >> 10) & 0x3F;
 
-                if completion_code == 1 { // Success!
-                    win.draw_text("Success! Slot ID:", 20, 470, 14.0, 0x00FF00, f);
-                    win.draw_hex(slot_id, 180, 470, f);
+                if trb_type == 33 { // Command Completion Event (仕様書 6.4.2.2)
+                    let completion_code = (unsafe { core::ptr::read_volatile(base_ptr.add(2)) } >> 24) & 0xFF;
+                    slot_id = (status >> 24) & 0xFF;
+
+                    if completion_code == 1 && slot_id != 0 {
+                        // ついに本物の Slot ID を発見！
+                        win.draw_text("Success! Slot ID:", 20, 470, 14.0, 0x00FF00, f);
+                        win.draw_hex(slot_id, 180, 470, f);
+                        break;
+                    } else if completion_code == 1 && slot_id == 0 {
+                        // Success だけど 0 なら、まだ初期化中イベントなどが混ざっている可能性
+                        win.draw_text("Waiting for valid Slot ID...", 20, 500, 14.0, 0xAAAAAA, f);
+                    }
                 } else {
-                    win.draw_text("Command Failed. Code:", 20, 470, 14.0, 0xFF0000, f);
-                    win.draw_hex(completion_code, 200, 470, f);
+                    // Port Status Change (34) など、他のイベントが先に来ていたら表示してスルー
+                    win.draw_text("Other Event found, skipping...", 20, 520, 14.0, 0xAAAAAA, f);
+                    win.draw_hex(trb_type as u32, 280, 520, f);
                 }
-                break;
+
+                // 次の TRB へ（Event Ring のサイズを超えないように注意、通常は十分な広さがあるはず）
+                current_index += 1;
+
+                // --- 本来はここで ERDP (Dequeue Pointer) を更新する ---
+                // 実機に「ここまで読んだよ」と伝えないと、Event Ring が一周した時に止まります。
+                // デバッグ中は index を進めるだけでも「行列の後ろ」は見に行けます。
             }
 
-            // QEMUなら一瞬ですが、実機だとわずかに時間がかかる場合があるので
-            // 本来はタイムアウト処理が必要ですが、デバッグ中は無限ループでOK
+            // QEMUなら一瞬ですが、実機だと Port Status Change が複数来るのを待つ時間が必要です
+            core::hint::spin_loop();
         }
 
         brain_muscle_wait(); //待機
