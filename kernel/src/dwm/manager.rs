@@ -95,4 +95,5 @@ impl WindowManager<'_> {
         // メモリのコピー（これが一番早い）
         vram_slice.copy_from_slice(&self.back_buffer);
     }
+
 }

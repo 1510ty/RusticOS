@@ -1,5 +1,8 @@
 use core::hint::spin_loop;
 use crate::*;
+use crate::dwm::font::FontManager;
+use crate::dwm::window::Window;
+use crate::pci::pci_config_read_32;
 
 pub fn init_xhci(manager: &mut dwm::manager::WindowManager) {
     let mut win = dwm::window::Window::new(200, 40, 800, 730, "xHCI Scanner", true);
@@ -218,6 +221,8 @@ pub fn init_xhci(manager: &mut dwm::manager::WindowManager) {
         }
         // win.draw_text("xHCI is now RUNNING!", 20, 480, 14.0, 0xFFFF00, f);
 
+        brain_muscle_wait(); //待機
+
         // --- 8. Runtime Register の特定 ---
         let rtsoff = unsafe { core::ptr::read_volatile((xhci_virt + 0x18) as *const u32) };
         let runtime_base = xhci_virt + (rtsoff & !0x1F) as u64;
@@ -370,6 +375,33 @@ pub fn init_xhci(manager: &mut dwm::manager::WindowManager) {
             // 本来はタイムアウト処理が必要ですが、デバッグ中は無限ループでOK
         }
 
+        brain_muscle_wait(); //待機
+
+        // --- 1. ポートを自動で見つける (スキャン) ---
+        // 1. 最初から u32 だよ！と教えてあげる
+        let mut actual_speed: u32 = 0;
+        let mut actual_port_num: u32 = 0;
+
+        for i in 0..max_ports {
+            let port_reg_ptr = (op_reg_virt + 0x400 + (i as u64 * 0x10)) as *mut u32;
+            let portsc = unsafe { core::ptr::read_volatile(port_reg_ptr) };
+
+            if (portsc & 0x01) != 0 {
+                // 2. 結果を u32 にキャストして代入
+                actual_speed = ((portsc >> 10) & 0x0F) as u32;
+                actual_port_num = (i + 1) as u32;
+                break;
+            }
+        }
+
+        // もし1つも見つからなかったら、ここから先は動かないので注意！
+        if actual_port_num == 0 {
+            win.draw_text("Device not found!", 20, 470, 20.0, 0xFF0000, f);
+            show_xhcis(&mut win,f);
+            manager.add_window(win);
+            return;
+        }
+
         // --- 12. Input Context の確保 ---
         // Input Context は最低でも 33 * 32 バイト (約1KB) 必要です
         // これも 64バイト境界 or 4KB境界である必要があります
@@ -387,23 +419,62 @@ pub fn init_xhci(manager: &mut dwm::manager::WindowManager) {
             // Bit 2 = Add Context (Endpoint 0)
             core::ptr::write_volatile(input_context_virt.add(1), 0x0000_0006); //Gemini
             //core::ptr::write_volatile(input_context_virt.add(1), 0x3); //ChatGPT
-            // --- B. Slot Context (次 32 bytes) ---
-            // デバイス全体の情報を書く
-            let slot_ctx = input_context_virt.add(16); // インデックス8から //64bitなら16がただしい!!!
-            // Route String=0, Speed=(さっき調べた値), Context Entries=1 (EP0のみ)
-            // ここではとりあえず汎用的な値をセット
-            let context_entries = 1;
-            let speed = 3; // とりあえず SuperSpeed (本来は PORTSC から取得)
-            core::ptr::write_volatile(slot_ctx.add(0), (context_entries << 27) | (speed << 20));
-            // Root Hub Port Number (刺さっているポート番号)
-            core::ptr::write_volatile(slot_ctx.add(5), (5 << 16)); // ポート1と仮定 //5だよ5！！！
+
+
+            // // --- B. Slot Context (次 32 bytes) ---
+            //
+            // let slot_ctx = input_context_virt.add(16); // インデックス8から //64bitなら16がただしい!!!
+            //
+            // let context_entries = 1;
+            // let speed = 3; // とりあえず SuperSpeed (本来は PORTSC から取得)
+            // core::ptr::write_volatile(slot_ctx.add(0), (context_entries << 27) | (speed << 20));
+            //
+            // // Root Hub Port Number (刺さっているポート番号)
+            // core::ptr::write_volatile(slot_ctx.add(5), (5 << 16)); // ポート1と仮定 //5だよ5！！！
+            //
+
+
+            let slot_ctx = input_context_virt.add(16);
+
+            unsafe {
+                // DW0: Speed をガチのやつにする
+                let context_entries = 1;
+                core::ptr::write_volatile(
+                    slot_ctx.add(0),
+                    (context_entries << 27) | (actual_speed << 20)
+                );
+
+                // DW1: Root Hub Port Number (ここが仕様上の正解！)
+                // 「5」固定をやめて、見つかったポート番号を入れる
+                core::ptr::write_volatile(
+                    slot_ctx.add(1),
+                    (actual_port_num << 16)
+                );
+
+                // 今まで 5 を書いていた DW5 は 0 で掃除
+                core::ptr::write_volatile(slot_ctx.add(5), 0);
+            }
+
 
             // --- C. Endpoint 0 Context (次 32 bytes) ---
-            // USBの制御用エンドポイントの設定
-            let ep0_ctx = input_context_virt.add(32); // インデックス16から　//64bitなら32!
-            // EP Type = Control, Max Packet Size = 512 (SuperSpeed時)
-            core::ptr::write_volatile(ep0_ctx.add(1), (4 << 3) | (64 << 16));
-            // ここに Transfer Ring (データ転送用リング) のアドレスを書く必要がある...
+            let ep0_ctx = input_context_virt.add(32);
+
+            // Speed に応じた Max Packet Size の決定
+            let mps = if actual_speed == 4 {
+                512 // SuperSpeed (USB 3.0)
+            } else {
+                64  // High-Speed (USB 2.0)
+                // ※本来 Full/Low Speed は 8 ですが、まずは 64 で叩いてみるのが一般的
+            };
+
+            // EP Type = Control (4)
+            // Max Packet Size = mps (Bit 16-31)
+            unsafe {
+                core::ptr::write_volatile(
+                    ep0_ctx.add(1),
+                    (4 << 3) | (mps << 16)
+                );
+            }
         }
 
         // win.draw_text("Input Context Prepared!", 20, 40, 14.0, 0x00FF00, f);
@@ -516,123 +587,77 @@ pub fn init_xhci(manager: &mut dwm::manager::WindowManager) {
             core::hint::spin_loop();
         }
 
-        // --- デバッグダンプ開始 ---
-
-        // 1. 根本的な設定の確認 (HCCPARAMS1)
-        // let hccp1 = unsafe { core::ptr::read_volatile((xhci_virt + 0x08) as *const u32) };
-        // let csz = hccp1 & 0x01; // Bit 0: Context Size (0=32byte, 1=64byte)
-        //
-        // win.draw_text("HCCPARAMS1:", 20, 100, 14.0, 0xAAAAAA, f);
-        // win.draw_hex(hccp1, 150, 100, f);
-        // win.draw_text(if csz == 1 { "CSZ: 64-byte" } else { "CSZ: 32-byte" }, 280, 100, 14.0, 0xFF00FF, f);
-        //
-        // // 2. Doorbell 住所の再確認
-        // win.draw_text("DB Offset:", 20, 130, 14.0, 0xAAAAAA, f);
-        // win.draw_hex(dboff, 150, 130, f);
-        // win.draw_text("DB0 Ptr:", 280, 130, 14.0, 0xAAAAAA, f);
-        // win.draw_hex(db0_ptr as u64 as u32, 380, 130, f);
-        //
-        // // 3. Command Ring の現在地 (CRCR)
-        // let crcr = unsafe { core::ptr::read_volatile((op_reg_virt + 0x18) as *const u64) };
-        // win.draw_text("CRCR Reg:", 20, 160, 14.0, 0xAAAAAA, f);
-        // win.draw_hex((crcr >> 32) as u32, 150, 160, f); // 上位
-        // win.draw_hex(crcr as u32, 250, 160, f);         // 下位
-
-        // 4. Address Device TRB の生データ (投げた直後のメモリ)
-        // cmd_ring_virt.add(4) 周辺をダンプ
-        // win.draw_text("AD TRB Raw:", 20, 200, 14.0, 0xFFFF00, f);
-        // for i in 4..8 {
-        //     let val = unsafe { core::ptr::read_volatile(cmd_ring_virt.add(i)) };
-        //     win.draw_hex(val, (20 + (i - 4) * 100) as i32, 220, f);
-        // }
-
-        // 5. Event Ring の生ダンプ (ここが一番重要)
-        // index 0..3 (Enable Slot), 4..7 (Address Device)
-        // win.draw_text("Event Ring Dump (Index 0-7):", 20, 260, 14.0, 0x00FFFF, f);
-        // for i in 0..8 {
-        //     let val = unsafe { core::ptr::read_volatile(event_ring_virt.add(i)) };
-        //     let y = 280 + (i / 4) * 30;
-        //     let x = 20 + (i % 4) * 100;
-        //     win.draw_hex(val, x as i32, y as i32, f);
-        // }
-
-        // 6. Input Context の先頭を少しだけ
-        // win.draw_text("Input Context Head:", 20, 360, 14.0, 0xAAAAAA, f);
-        // for i in 0..4 {
-        //     let val = unsafe { core::ptr::read_volatile(input_context_virt.add(i)) };
-        //     win.draw_hex(val, (20 + i * 100) as i32, 380, f);
-        // }
-
-        // --- 現場検証ダンプ ---
-        // 1. TRBの4つのDwordを表示
-        // win.draw_text("TRB DW3:", 20, 600, 12.0, 0xFFFFFF, f);
-        // win.draw_hex(unsafe { core::ptr::read_volatile(ad_trb_virt.add(3)) }, 100, 600, f);
-        //
-        // // 2. Input Contextのアドレスを表示 (アライメント確認)
-        // win.draw_text("InpCtx Phys:", 20, 620, 12.0, 0xFFFFFF, f);
-        // win.draw_hex(input_context_phys as u32, 120, 620, f); // 下位32bit
-        // win.draw_hex((input_context_phys >> 32) as u32, 250, 620, f); // 上位32bit
-        //
-        // // 3. Input Contextの中身 (重要ビット)
-        // let ctrl_ctx_dw1 = unsafe { core::ptr::read_volatile(input_context_virt.add(1)) };
-        // win.draw_text("Ctrl DW1:", 20, 640, 12.0, 0xFFFFFF, f);
-        // win.draw_hex(ctrl_ctx_dw1, 100, 640, f); // 0x00000006 なら正解
-
-        // --- デバッグダンプ終了 ---
-
-        // --- 現場検証：ポートの正体を暴く ---
-
-        // --- ポート5の正体を暴く！ ---
-
-        // 1. Operational Register までは同じ
-        let caplength = unsafe { core::ptr::read_volatile(xhci_virt as *const u8) } as u64;
-        let op_base = xhci_virt + caplength;
-
-        // 2. Port Register Set 5 の場所を計算
-        // ポートnのアドレス = PortRegisterBase + (n - 1) * 0x10
-        // なので、ポート5なら 0x400 + (4 * 0x10) = 0x440
-        let port5_offset = 0x400 + (4 * 0x10);
-        let portsc_ptr = (op_base + port5_offset) as *const u32;
-
-        // 3. レジスタを読み取る
-        let portsc = unsafe { core::ptr::read_volatile(portsc_ptr) };
-
-        // CCS (Bit 0) もついでに確認して表示すると安心です
-        let is_connected = (portsc & 0x01) != 0;
-
-        // 4. スピード（何速）を抽出 (Bit 10-13)
-        let speed_id = (portsc >> 10) & 0x0F;
-
-        // win.draw_text("Port 5 Speed ID:", 20, 500, 14.0, 0xFFFFFF, f);
-        // win.draw_hex(speed_id, 180, 500, f);
-
-        // 意味を表示
-        let speed_msg = if !is_connected {
-            "Not Connected"
-        } else {
-            match speed_id {
-                1 => "Full-Speed",
-                2 => "Low-Speed",
-                3 => "High-Speed",
-                4 => "SuperSpeed",
-                _ => "?? (Unknown Speed)",
-            }
-        };
-        //win.draw_text(speed_msg, 240, 500, 14.0, 0xFFFF00, f);
-
-        // こんな感じで一気に並べて出すと「ズレ」が視覚的にわかります
-        for i in 0..48 {
-            let val = unsafe { core::ptr::read_volatile(input_context_virt.add(i)) };
-            let x = (i % 8) * 80 + 20;
-            let y = (i / 8) * 20 + 100; // 適当な表示位置
-            win.draw_hex(val, x as i32, y as i32, f);
-        }
-
-
+        show_xhcis(&mut win,f);
 
         manager.add_window(win);
 
     }
 
 
+}
+
+fn show_xhcis(win: &mut Window, f: &mut FontManager) {
+    let mut y: i32 = 40;
+
+    win.draw_text("--- PCI xHCI Scanner ---", 20, y as usize, 20.0, 0xFFFF00, f);
+    y += 30;
+
+    for bus in 0..256u32 {
+        for slot in 0..32u32 {
+            for func in 0..8u32 {
+                let vendor_id = unsafe { pci::pci_config_read_32(bus as u8, slot as u8, func as u8, 0x00) } & 0xFFFF;
+                if vendor_id == 0xFFFF { continue; }
+
+                let class_rev = unsafe { pci::pci_config_read_32(bus as u8, slot as u8, func as u8, 0x08) };
+                let class = (class_rev >> 24) & 0xFF;
+                let sub = (class_rev >> 16) & 0xFF;
+                let prog = (class_rev >> 8) & 0xFF;
+
+                // xHCI Controller (0C 03 30)
+                // xHCI Controller (0C 03 30) 判定の中
+                if class == 0x0C && sub == 0x03 && prog == 0x30 {
+                    let cmd_stat = unsafe { pci_config_read_32(bus as u8, slot as u8, func as u8, 0x04) };
+                    let bar0 = unsafe { pci_config_read_32(bus as u8, slot as u8, func as u8, 0x10) };
+                    let bar1 = unsafe { pci_config_read_32(bus as u8, slot as u8, func as u8, 0x14) };
+
+                    let is_64 = (bar0 & 0x4) != 0;
+                    let phys_base = if is_64 {
+                        ((bar1 as u64) << 32) | ((bar0 & !0xF) as u64)
+                    } else {
+                        (bar0 & !0xF) as u64
+                    };
+
+                    // 全て x=20 からスタートして縦に並べる
+                    win.draw_text("--- xHCI FOUND ---", 20, y as usize, 16.0, 0xFFFF00, f);
+                    y += 25;
+
+                    win.draw_text("Bus: ", 20, y as usize, 16.0, 0xFFFFFF, f);
+                    win.draw_hex(bus, 150, y, f); // ラベルと値が被らないように150空ける
+                    y += 25;
+
+                    win.draw_text("Slot:", 20, y as usize, 16.0, 0xFFFFFF, f);
+                    win.draw_hex(slot, 150, y, f);
+                    y += 25;
+
+                    win.draw_text("Func:", 20, y as usize, 16.0, 0xFFFFFF, f);
+                    win.draw_hex(func, 150, y, f);
+                    y += 25;
+
+                    win.draw_text("CMD: ", 20, y as usize, 16.0, 0xFFFFFF, f);
+                    win.draw_hex(cmd_stat, 150, y, f);
+                    y += 25;
+
+                    win.draw_text("BAR_H:", 20, y as usize, 16.0, 0x00FF00, f);
+                    win.draw_hex((phys_base >> 32) as u32, 150, y, f);
+                    y += 25;
+
+                    win.draw_text("BAR_L:", 20, y as usize, 16.0, 0x00FF00, f);
+                    win.draw_hex(phys_base as u32, 150, y, f);
+
+                    y += 50; // 次のデバイスまで大きく空ける
+                }
+
+            }
+        }
+    }
 }

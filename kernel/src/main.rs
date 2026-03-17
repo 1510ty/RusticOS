@@ -126,6 +126,15 @@ pub extern "C" fn _start() -> ! {
 
     //print_usable_memory_stats(mmap);
 
+    println("Start");
+    update_screen();
+
+    brain_muscle_wait();
+
+    println("Stop");
+
+    update_screen();
+
 
     println("Starting DWM...");
 
@@ -136,6 +145,19 @@ pub extern "C" fn _start() -> ! {
     unsafe{dwm::main::dwm_main(VRAM_PTR, WIDTH, HEIGHT);}
 
 }
+
+pub fn brain_muscle_wait() {
+    // 4.6GHzなら、これくらい回せば1秒弱は稼げるはず
+    // 最適化で消されないように volatile っぽく振る舞わせる
+    for i in 0..2_00_000_000u64 {
+        unsafe {
+            // CPUに「何もしない」という命令を投げ続けさせる
+            // これで13620Hの実行ユニットを物理的に拘束する！
+            core::arch::asm!("nop");
+        }
+    }
+}
+
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
     loop { unsafe { asm!("hlt") } }
